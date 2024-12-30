@@ -1,0 +1,241 @@
+---
+title: "Analysis of Pride and Prejudice"
+author: "Weixun Xie"
+date: "2024-05-01"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 6
+editor_options: 
+  markdown: 
+    wrap: 72
+
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+This project will delve into Jane Austen's beloved novel Pride and Prejudice. A story cherished by generations, it explores love, social expectations and personal growth in Regency England.
+
+"Pride and Prejudice" is a classic novel by Jane Austen, set in England in the early 19th century. The play follows the lives of the Bennet family, focusing on protagonist Elizabeth Bennet and her romantic relationship with the wealthy and estranged Mr. Darcy. The novel explores themes of class, marriage, and personal growth as Elizabeth grapples with the complexities of love and social expectations while challenging her own prejudices and misunderstandings. Through her wit, irony, and sharp observations, Austen created a timeless story that continues to fascinate readers with its rich characters and profound commentary on human nature.
+
+First, the project dug deep into Austen's text to create a chart that highlighted the 20 most common words in Pride and Prejudice, giving us an idea of the book's language and themes.
+
+The project will then delve into sentiment analysis, examining the emotional tone of the entire story. Comparing charts will reveal how emotions such as love, pride, and prejudice evolved.
+
+Finally, this project will explore binary analysis, examining how words pair up to reveal deeper meanings and connections within a narrative.
+
+```{r}
+library(dplyr)
+library(tm.plugin.webmining)
+library(purrr)
+library(tidytext)
+library(gutenbergr)
+library(ggplot2)
+library(igraph)
+library(tidyr)
+library(ggraph)
+```
+
+```{r}
+my_mirror <- "http://mirrors.xmission.com/gutenberg/"
+Pride_and_Prejudice <- gutenberg_download(42671)
+```
+
+# Top 20 most common words
+
+By comparing the frequency of the most common words with the sentiment distribution, we can identify whether frequently mentioned topics or people are associated with positive or negative sentiment.
+
+## Counting and Filtering
+
+```{r}
+# Convert the text to a dataframe
+text_df <- data.frame(line = 1:length(Pride_and_Prejudice$text), text = Pride_and_Prejudice$text)
+
+# Tokenize the data
+words <- text_df %>%
+  unnest_tokens(word, text)
+
+
+# Load stop words
+data(stop_words)
+
+# Remove stop words
+tidy_text <- words %>%
+  anti_join(stop_words, by = "word")
+
+
+# Count words and filter for the top 20
+word_counts <- tidy_text %>%
+  count(word, sort = TRUE) %>%
+  top_n(20, n)
+
+word_counts
+```
+
+## Plotting
+
+```{r}
+# Create the plot
+ggplot(word_counts, aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "steelblue") +
+  xlab("Word") +
+  ylab("Frequency") +
+  ggtitle("Top 20 Most Common Words in Pride and Prejudice") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The chart of the top 20 most common words mainly includes character names and neutral words. This shows a focus on characters and relationships.
+
+Many of the top words are names like "Elizabeth", "Darcy", and "Bennet". By examining the sentiment analysis, we can see how these characters are often involved in contexts with positive or negative sentiments, which may tell us about their roles in emotional high points of the narrative.
+
+# Sentiment Analysis
+
+The sentiment analysis will delve deeper into the emotional undercurrents, providing different levels of understanding of how these characters interact and the tone of those interactions.
+
+## General Sentiment
+
+```{r}
+# Get sentiment scores from the 'bing' lexicon
+bing_sentiments <- get_sentiments("bing")
+
+# Add a temporary index to preserve the order
+tidy_text <- tidy_text %>%
+  mutate(temp_index = row_number())
+
+# Join words with sentiments
+sentiment_scores <- tidy_text %>%
+  inner_join(bing_sentiments, by = "word") %>%
+  mutate(sentiment_score = ifelse(sentiment == "positive", 1, ifelse(sentiment == "negative", -1, 0)))
+
+# Reassign the original index based on the temporary index
+sentiment_scores <- sentiment_scores %>%
+  arrange(temp_index) %>%
+  mutate(index = temp_index) %>%
+  select(-temp_index)  # Drop the temporary index after use
+
+
+# Count the number of each word by sentiment
+bing_word_counts <- sentiment_scores %>%
+  group_by(word, sentiment) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  ungroup()
+
+# Filter to top 10 words for each sentiment
+bing_top_words <- bing_word_counts %>%
+  group_by(sentiment) %>%
+  top_n(10, count) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, count))
+
+# Plot: Faceted bar chart for each sentiment
+facet_plot <- ggplot(bing_top_words, aes(x = word, y = count, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(title = "Top Contributing Words to Sentiments in Pride and Prejudice",
+       y = "Frequency", x = NULL) +
+  coord_flip() +
+  theme_minimal()
+
+print(facet_plot)
+
+```
+
+Words expressing negative emotions such as “miss,” “object,” and “impossible” are common, suggesting themes of desire, obstacles, and challenges in the narrative.
+
+In contrast, words expressing positive emotions such as "pleasure," "love," and "happy" emphasize the presence of moments of joy and love.
+
+This plot provides an overall count of positive vs. negative words throughout the book. This can give us some insight into the overall tone that Jane Austen uses in Pride and Prejudice.
+
+
+
+## Sentiment Over Time
+
+To visualize sentiment trends over the course of a text, we can modify existing analyzes to track how sentiment accumulates or changes from the beginning to the end of the text. This involves calculating a cumulative sentiment score as we process each tokenized word, and then plotting that cumulative score to observe trends.
+
+```{r}
+# Calculate cumulative sentiment
+cumulative_sentiment <- sentiment_scores %>%
+  arrange(index) %>%
+  group_by(sentiment) %>%
+  mutate(cumulative_count = cumsum(ifelse(sentiment_score == 1, 1, -1))) %>%
+  ungroup()
+
+# Plot cumulative sentiment counts over time for both positive and negative
+cumulative_plot <- ggplot(cumulative_sentiment, aes(x = index, y = cumulative_count, color = sentiment)) +
+  geom_line() +
+  labs(title = "Cumulative Sentiment Occurrences Over Time in the Text",
+       x = "Word Index (Row Number)", y = "Cumulative Count of Sentiment Occurrences",
+       color = "Sentiment Type") +
+  theme_minimal()
+
+print(cumulative_plot)
+```
+
+The cumulative number of positive emotions shows a steady growth trend. This shows that positive words appear consistently throughout the text, and there is an overall rise in positive sentiment as the story progresses.
+
+In contrast, the cumulative number of negative emotions showed a steady downward trend. This suggests that negative emotions accumulate at a slower rate than positive emotions, suggesting that the occurrence of negative words decreases as the story progresses.
+
+Therefore, the dominance of positive emotions over negative emotions in Pride and Prejudice. The upward trajectory of the positive sentiment line, in contrast to the downward slope of the negative sentiment line, may mean that the author maintains a generally optimistic or favorable tone throughout the novel. This tool is valuable for literary analysis, providing insight into the emotional course of a narrative and potentially relating to key plot developments.
+
+# Bigram Analysis
+
+By using the ‘tidytext’ and ‘igraph’ packages to preprocess text, generate bivariate graphs and then visualize them as network graphs. This method highlights connections between words and can provide insight into common phrases or themes in the text.
+
+## Generate Bigram Graph
+
+```{r}
+# Step 1: Generate and filter bigrams
+bigrams <- Pride_and_Prejudice %>%
+  unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+  separate(bigram, into = c("word1", "word2"), sep = " ") %>%
+  filter(!word1 %in% stop_words$word, !word2 %in% stop_words$word)
+
+# Step 2: Count bigram frequencies
+bigram_counts <- bigrams %>%
+  unite(bigram, word1, word2, sep = " ") %>%
+  count(bigram, sort = TRUE)
+
+# Step 3: Create graph from bigram counts
+bigram_graph <- bigram_counts %>%
+  filter(n > 30) %>% # Adjust this threshold as necessary
+  graph_from_data_frame()
+
+# Step 4: Plot the bigram graph
+set.seed(2017)
+bigram_plot <- ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point(color = "darkslategray4", size = 3) +
+  geom_node_text(aes(label = name), vjust = 1.5) +
+  ggtitle("Common Bigrams in Pride and Prejudice") +
+  theme_minimal()
+
+# Print the graph
+print(bigram_plot)
+
+```
+
+Words like "Elizabeth," "Darcy," "Jane," "Bennet," and "Bingley" are prominent, indicating that these are key characters or terms that are frequently discussed in the text. Characters such as "Elizabeth" and "Darcy" have very close names, indicating a strong narrative connection, consistent with their central roles in stories such as Jane Austen's Pride and Prejudice. The placement of words such as "reply," "cry," and "watch" close to the characters' names indicate that these words are often used in dialogue or descriptions involving these characters. Connections like "half an hour" and "ten thousand pounds" may indicate recurring themes or important narrative elements related to time and money. The diagram helps identify which words and which themes or characters interact to dominate various parts of the text. Observing clusters can help understand the focus or narrative style of different parts of the text. 
+
+## Frequency of Bigrams
+```{r}
+bigram_tf_idf <- bigram_counts %>%
+  filter(n > 30 & n < 1000) # Adjust this threshold for visualization
+
+bigram_bar_plot <- ggplot(bigram_tf_idf, aes(x = reorder(bigram, n), y = n)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  ggtitle("The Most Common Bigrams in Pride and Prejudice")
+
+# Print the bar plot
+print(bigram_bar_plot)
+```
+
+Bigram network graph provides a visual summary of the relationships and thematic structures within text. It's particularly useful for literary analysis, content exploration, or even preparing for more in-depth data-driven investigation of a text. Such diagrams not only highlight the most critical words and their connections, they can also reveal the underlying structure of a narrative or discourse.
+
+# Conclusion
+
+The project's exploration of "Pride and Prejudice" through digital text analysis illuminates Jane Austen's use of language and her narrative skill in weaving complex emotional dynamics and themes. The frequent appearance of key characters' names and emotionally charged words across the text underscores the novel’s focus on personal relationships and social commentary. Furthermore, the positive trend in sentiment analysis and the strategic use of word pairs reveal how Austen crafts her story to evolve from conflict to resolution, reflecting the societal and personal growth of her characters. Overall, this analysis not only enhances our appreciation of Austen's literary techniques but also demonstrates how modern computational tools can offer fresh insights into classic literature, revealing underlying patterns and themes that may not be immediately evident through traditional reading alone.
